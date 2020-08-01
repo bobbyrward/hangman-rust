@@ -22,147 +22,213 @@ const HANGMAN: [&str; 7] = [
 const MAX_MISSES: usize = 6;
 const CENTER_OFFSET: i32 = 6;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum GameState {
-    Running,
+    Running {
+        secret: String,
+        misses: usize,
+        guesses: [bool; 26],
+    },
     Lost,
     Won,
 }
 
+impl GameState {
+    fn new() -> Self {
+        Self::Running {
+            misses: 0,
+            secret: HangmanGame::generate_word().to_uppercase(),
+            guesses: [false; 26],
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        match self {
+            Self::Running { .. } => true,
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_lost(&self) -> bool {
+        match self {
+            Self::Lost => true,
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_won(&self) -> bool {
+        match self {
+            Self::Won => true,
+            _ => false,
+        }
+    }
+}
+
 struct HangmanGame {
     state: GameState,
-    secret: String,
-    misses: usize,
-    guesses: [bool; 26],
     canvas: String,
+}
+
+fn char_to_index(c: char) -> usize {
+    let i = c as u8;
+    if i < 65 || i > 90 {
+        INVALID_INPUT as usize
+    } else {
+        (i - 65) as usize
+    }
 }
 
 impl HangmanGame {
     fn new_game() -> HangmanGame {
-        let game = HangmanGame {
-            secret: HangmanGame::generate_word().to_uppercase(),
-            misses: 0,
-            guesses: [false; 26],
+        HangmanGame {
             canvas: String::new(),
-            state: GameState::Running,
-        };
-        return game;
+            state: GameState::new(),
+        }
     }
 
     fn solved_word(&self) -> bool {
-        for c in self.secret.chars() {
-            if !self.guesses[HangmanGame::char_to_index(c) as usize] {
-                return false;
-            }
+        match self.state {
+            GameState::Running {
+                ref secret,
+                ref guesses,
+                ..
+            } => !secret.chars().any(|c| !guesses[char_to_index(c)]),
+            _ => panic!("solved_word on a finished game"),
         }
-        return true;
     }
 
     fn letter_store(&self) -> String {
-        let mut store = String::new();
-        for (i, guessed) in self.guesses.iter().enumerate() {
-            if i == 13 {
-                store.push('\n')
-            };
-            if *guessed {
-                store.push(ALPHABET[i as usize]);
-            } else {
-                store.push(' ');
-            }
+        match self.state {
+            GameState::Running { ref guesses, .. } => guesses
+                .iter()
+                .enumerate()
+                .map(|(i, guessed)| {
+                    format!(
+                        "{}{}",
+                        if i == 13 { "\n" } else { "" },
+                        if *guessed { ALPHABET[i as usize] } else { ' ' },
+                    )
+                })
+                .collect(),
+            _ => panic!("letter_store on finished game"),
         }
-        return store;
     }
 
-    fn enter_letter(&mut self, guess: String) {
-        let guess = guess.to_string();
-        let index = HangmanGame::guess_to_index(&guess);
-        if index == INVALID_INPUT {
-            return;
-        }
+    fn enter_letter(&mut self, guess: String) -> Option<String> {
+        match self.state {
+            GameState::Running {
+                ref mut guesses,
+                ref secret,
+                ref mut misses,
+                ..
+            } => {
+                let index = match HangmanGame::guess_to_index(&guess) {
+                    Some(index) => index,
+                    None => return None,
+                };
 
-        // React to guess based on state
-        if self.guesses[index as usize] {
-            return;
-        } else if self.secret.contains(&guess.to_uppercase()) {
-            // Guess was in word
-        } else if self.misses < MAX_MISSES {
-            self.misses = self.misses + 1;
-        }
+                // React to guess based on state
+                if guesses[index as usize] {
+                    return None;
+                } else if secret.contains(&guess.to_uppercase()) {
+                    // Guess was in word
+                } else if *misses < MAX_MISSES {
+                    *misses += 1;
+                }
+                let secret = secret.clone();
 
-        // Update state
-        self.guesses[index as usize] = true;
-        self.canvas = String::from(HANGMAN[self.misses]);
+                // Update state
+                guesses[index as usize] = true;
+                self.canvas = String::from(HANGMAN[*misses]);
 
-        // Check if the game is over
-        if self.misses == MAX_MISSES {
-            self.state = GameState::Lost;
-        } else if self.solved_word() {
-            self.state = GameState::Won;
+                // Check if the game is over
+                if *misses == MAX_MISSES {
+                    self.state = GameState::Lost;
+                } else if self.solved_word() {
+                    self.state = GameState::Won;
+                }
+
+                Some(secret)
+            }
+            _ => panic!("enter_letter on a finished game"),
         }
     }
 
     fn get_status(&self) -> String {
-        let mut status = String::new();
-
-        for c in self.secret.chars() {
-            let i = HangmanGame::char_to_index(c) as usize;
-            if self.guesses[i] {
-                status.push(c);
-            } else {
-                status.push('_');
-            }
+        match self.state {
+            GameState::Running {
+                ref guesses,
+                ref secret,
+                ..
+            } => secret
+                .chars()
+                .map(|c| if guesses[char_to_index(c)] { c } else { '_' })
+                .collect(),
+            _ => panic!("get_status on a finished game"),
         }
-        return status;
     }
 
-    fn char_to_index(c: char) -> u8 {
-        let i = c as u8;
-        if i < 65 || i > 90 {
-            return INVALID_INPUT;
-        }
-        return i - 65;
-    }
-
-    fn guess_to_index(guess: &str) -> u8 {
-        let c: char = match guess.trim().to_uppercase().parse() {
-            Ok(ch) => ch,
-            Err(_) => return INVALID_INPUT,
-        };
-        HangmanGame::char_to_index(c)
+    fn guess_to_index(guess: &str) -> Option<u8> {
+        guess
+            .trim()
+            .to_uppercase()
+            .parse::<char>()
+            .ok()
+            .map(|c| char_to_index(c) as u8)
     }
 
     fn generate_word() -> String {
-        let dict_file = "/usr/share/dict/american-english";
-
         let o = Command::new("shuf")
-            .arg(dict_file)
+            .arg("/usr/share/dict/american-english")
             .output()
             .expect("error")
             .stdout;
-        let output = String::from_utf8(o).unwrap();
 
-        for w in output.lines() {
-            // Skip words that contain an apostrophe
-            if !w.contains("'") {
-                return w.to_string();
-            }
+        String::from_utf8(o)
+            .expect("word should be valid utf-8")
+            .lines()
+            .find(|w| !w.contains('\''))
+            .expect("Should have found at least one word")
+            .to_string()
+    }
+
+    #[allow(dead_code)]
+    fn secret(&self) -> Option<&String> {
+        match self.state {
+            GameState::Running { ref secret, .. } => Some(secret),
+            _ => None,
         }
-        return String::from("none");
+    }
+
+    #[allow(dead_code)]
+    fn misses(&self) -> Option<usize> {
+        match self.state {
+            GameState::Running { misses, .. } => Some(misses),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn guesses(&self) -> Option<&[bool]> {
+        match self.state {
+            GameState::Running { ref guesses, .. } => Some(guesses),
+            _ => None,
+        }
+    }
+
+    fn state(&self) -> &GameState {
+        &self.state
     }
 }
 
-fn game_over(s: &mut cursive::Cursive, result: GameState) {
+fn game_over(s: &mut cursive::Cursive, result: GameState, word: String) {
     // Get end message
     let message = match result {
         GameState::Won => "Congratulations! You won!",
         GameState::Lost => "You lost! Better luck next time :(",
-        _ => "Something has gone terribly wrong...",
-    };
-
-    let mut word = String::new();
-    let d: Option<&mut HangmanGame> = s.user_data();
-    if let Some(g) = d {
-        word = g.secret.clone();
+        _ => panic!("Something has gone terribly wrong..."),
     };
 
     let message_view = TextView::new(message).h_align(HAlign::Center);
@@ -182,46 +248,44 @@ fn game_over(s: &mut cursive::Cursive, result: GameState) {
 }
 
 fn game_tick(s: &mut cursive::Cursive, guess: &str) {
-    // Update game state
-    s.with_user_data(|game: &mut HangmanGame| {
-        game.enter_letter(String::from(guess));
-    });
-
     // Clear input field
     s.call_on_name("input", |view: &mut EditView| view.set_content(""));
 
-    // Get new view state
-    let mut state: GameState = GameState::Running;
-    let mut misses: usize = 0;
-    let mut store = String::new();
-    let mut status = String::new();
-    let d: Option<&mut HangmanGame> = s.user_data();
-    if let Some(g) = d {
-        misses = g.misses;
-        store = g.letter_store();
-        status = g.get_status();
-        state = g.state;
-    };
-    s.call_on_name("canvas", |view: &mut Canvas<String>| {
-        view.set_draw(move |_, printer| {
-            let state = String::from(HANGMAN[misses]);
-            let lines = state.lines();
-            for (i, l) in lines.enumerate() {
-                printer.print((CENTER_OFFSET, i as i32), l);
-            }
-        })
-    });
-    s.call_on_name("letter_store", |view: &mut TextView| {
-        view.set_content(store.clone());
-    });
-    s.call_on_name("status", |view: &mut TextView| {
-        view.set_content(status);
-    });
+    let game: &mut HangmanGame = s
+        .user_data()
+        .expect("Should never get here.  Data should always be present.");
 
-    if state != GameState::Running {
-        game_over(s, state);
+    let mut secret = String::new();
+    if let Some(end_secret) = game.enter_letter(String::from(guess)) {
+        secret = end_secret;
+    }
+
+    if game.state().is_running() {
+        let store = game.letter_store();
+        let status = game.get_status();
+        let misses = game.misses().expect("Should be running");
+
+        s.call_on_name("canvas", |view: &mut Canvas<String>| {
+            view.set_draw(move |_, printer| {
+                HANGMAN[misses]
+                    .lines()
+                    .enumerate()
+                    .for_each(|(i, l)| printer.print((CENTER_OFFSET, i as i32), l));
+            })
+        });
+        s.call_on_name("letter_store", |view: &mut TextView| {
+            view.set_content(store);
+        });
+        s.call_on_name("status", |view: &mut TextView| {
+            view.set_content(status);
+        });
+    } else {
+        let state = game.state.clone();
+
+        game_over(s, state, secret);
     }
 }
+
 fn build_ui() -> cursive::Cursive {
     let mut ui = cursive::default();
     let game = HangmanGame::new_game();
@@ -266,10 +330,9 @@ fn build_ui() -> cursive::Cursive {
             )
             .button("Quit", |s| s.quit()),
     );
-    return ui;
+    ui
 }
 
 fn main() {
-    let mut ui = build_ui();
-    ui.run();
+    build_ui().run();
 }
